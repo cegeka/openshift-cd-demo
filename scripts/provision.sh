@@ -19,7 +19,7 @@ function usage() {
     echo "   delete                   Clean up and remove demo projects and objects"
     echo "   idle                     Make all demo services idle"
     echo "   unidle                   Make all demo services unidle"
-    echo 
+    echo
     echo "OPTIONS:"
     echo "   --user [username]         The admin user for the demo projects. mandatory if logged in as system:admin"
     echo "   --project-suffix [suffix] Suffix to be added to demo project names e.g. ci-SUFFIX. If empty, user will be used as suffix"
@@ -112,14 +112,17 @@ done
 
 LOGGEDIN_USER=$(oc $ARG_OC_OPS whoami)
 OPENSHIFT_USER=${ARG_USERNAME:-$LOGGEDIN_USER}
-PRJ_SUFFIX=${ARG_PROJECT_SUFFIX:-`echo $OPENSHIFT_USER | sed -e 's/[-@].*//g'`}
+PRJ_SUFFIX=cgk
 GITHUB_ACCOUNT=${GITHUB_ACCOUNT:-OpenShiftDemos}
 GITHUB_REF=${GITHUB_REF:-ocp-3.9}
 
 function deploy() {
   oc $ARG_OC_OPS new-project dev-$PRJ_SUFFIX   --display-name="Tasks - Dev"
+  oc $ARG_OC_OPS annotate ns dev-$PRJ_SUFFIX openshift.io/node-selector="customer=shared,app=true" --overwrite
   oc $ARG_OC_OPS new-project stage-$PRJ_SUFFIX --display-name="Tasks - Stage"
+  oc $ARG_OC_OPS annotate ns stage-$PRJ_SUFFIX openshift.io/node-selector="customer=shared,app=true" --overwrite
   oc $ARG_OC_OPS new-project cicd-$PRJ_SUFFIX  --display-name="CI/CD"
+  oc $ARG_OC_OPS annotate ns cicd-$PRJ_SUFFIX openshift.io/node-selector="customer=shared,app=true" --overwrite
 
   sleep 2
 
@@ -130,23 +133,27 @@ function deploy() {
     oc $ARG_OC_OPS adm policy add-role-to-user admin $ARG_USERNAME -n dev-$PRJ_SUFFIX >/dev/null 2>&1
     oc $ARG_OC_OPS adm policy add-role-to-user admin $ARG_USERNAME -n stage-$PRJ_SUFFIX >/dev/null 2>&1
     oc $ARG_OC_OPS adm policy add-role-to-user admin $ARG_USERNAME -n cicd-$PRJ_SUFFIX >/dev/null 2>&1
-    
-    oc $ARG_OC_OPS annotate --overwrite namespace dev-$PRJ_SUFFIX   demo=openshift-cd-$PRJ_SUFFIX >/dev/null 2>&1
+
+    oc $ARG_OC_OPS annotate --overwrite namespace dev-$PRJ_SUFFIX demo=openshift-cd-$PRJ_SUFFIX >/dev/null 2>&1
     oc $ARG_OC_OPS annotate --overwrite namespace stage-$PRJ_SUFFIX demo=openshift-cd-$PRJ_SUFFIX >/dev/null 2>&1
-    oc $ARG_OC_OPS annotate --overwrite namespace cicd-$PRJ_SUFFIX  demo=openshift-cd-$PRJ_SUFFIX >/dev/null 2>&1
+    oc $ARG_OC_OPS annotate --overwrite namespace cicd-$PRJ_SUFFIX demo=openshift-cd-$PRJ_SUFFIX >/dev/null 2>&1
 
     oc $ARG_OC_OPS adm pod-network join-projects --to=cicd-$PRJ_SUFFIX dev-$PRJ_SUFFIX stage-$PRJ_SUFFIX >/dev/null 2>&1
   fi
 
   sleep 2
 
-  oc new-app jenkins-ephemeral -n cicd-$PRJ_SUFFIX
+  oc import-image jenkins-2-rhel7 --from=registry.access.redhat.com/openshift3/jenkins-2-rhel7:v3.11.59-2 --confirm
+
+  sleep 2
+
+  oc $ARG_OC_OPS process -f https://raw.githubusercontent.com/openshift/origin/master/examples/jenkins/jenkins-ephemeral-template.json -p JENKINS_IMAGE_STREAM_TAG=jenkins-2-rhel7:latest NAMESPACE=cicd-$PRJ_SUFFIX  -n cicd-$PRJ_SUFFIX  | oc $ARG_OC_OPS apply -n cicd-$PRJ_SUFFIX  -f -
 
   sleep 2
 
   local template=https://raw.githubusercontent.com/$GITHUB_ACCOUNT/openshift-cd-demo/$GITHUB_REF/cicd-template.yaml
   echo "Using template $template"
-  oc $ARG_OC_OPS new-app -f $template --param DEV_PROJECT=dev-$PRJ_SUFFIX --param STAGE_PROJECT=stage-$PRJ_SUFFIX --param=WITH_CHE=$ARG_DEPLOY_CHE --param=EPHEMERAL=$ARG_EPHEMERAL -n cicd-$PRJ_SUFFIX 
+  oc $ARG_OC_OPS process -f $template --param DEV_PROJECT=dev-$PRJ_SUFFIX --param STAGE_PROJECT=stage-$PRJ_SUFFIX --param=WITH_CHE=$ARG_DEPLOY_CHE --param=EPHEMERAL=$ARG_EPHEMERAL -n cicd-$PRJ_SUFFIX | oc $ARG_OC_OPS apply -n cicd-$PRJ_SUFFIX -f -
 }
 
 function make_idle() {
@@ -221,7 +228,7 @@ case "$ARG_COMMAND" in
         echo
         echo "Delete completed successfully!"
         ;;
-      
+
     idle)
         echo "Idling demo..."
         make_idle
@@ -242,7 +249,7 @@ case "$ARG_COMMAND" in
         echo
         echo "Provisioning completed successfully!"
         ;;
-        
+
     *)
         echo "Invalid command specified: '$ARG_COMMAND'"
         usage
@@ -254,4 +261,4 @@ popd >/dev/null
 
 END=`date +%s`
 echo "(Completed in $(( ($END - $START)/60 )) min $(( ($END - $START)%60 )) sec)"
-echo 
+echo
